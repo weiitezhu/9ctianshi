@@ -77,6 +77,12 @@ def ai(text):
             print(f"    {C}{line}{W}")
 
 
+
+
+def win_condition(text):
+    if text:
+        print(f"  {Y}★ 过关条件：{W}{text}{W}")
+
 def scene(text):
     """Print scene description"""
     if not text:
@@ -196,6 +202,7 @@ def main():
 
         intro(r.get("level_intro", ""))
         scene(r.get("scene_text", ""))
+        win_condition(r.get("win_condition", ""))
         options(r.get("options", []))
         hint(r.get("hint", ""))
         status(r.get("rounds_left", "?"), r.get("score", 0))
@@ -249,6 +256,8 @@ def main():
                     ai(resp["ai_text"])
                 if resp.get("scene_text"):
                     scene(resp["scene_text"])
+                if resp.get("win_condition"):
+                    win_condition(resp["win_condition"])
                 options(resp.get("options", []))
                 hint(resp.get("hint", ""))
                 status(resp.get("rounds_left", "?"), resp.get("score", 0))

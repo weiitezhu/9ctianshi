@@ -25,6 +25,7 @@ class GameEngine:
             "scene_text": scene.get("text", ""),
             "options": scene.get("options", []),
             "hint": scene.get("hint", ""),
+            "win_condition": scene.get("win_condition", ""),
             "rounds_left": session.moves_left,
             "score": 0.0,
         }
@@ -93,6 +94,7 @@ class GameEngine:
             "scene_text": next_scene.get("text", ""),
             "options": next_scene.get("options", []),
             "hint": next_scene.get("hint", ""),
+            "win_condition": next_scene.get("win_condition", ""),
             "rounds_left": session.moves_left,
             "score": session.score,
         }
