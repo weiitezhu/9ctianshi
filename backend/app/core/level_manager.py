@@ -14,14 +14,18 @@ class LevelManager:
         return self._levels.get(level_id)
 
     def list_levels(self):
-        return [{"id": lid, "name": lv.name, "difficulty": lv.difficulty}
-                for lid, lv in sorted(self._levels.items())]
+        return [
+            {"id": lid, "name": lv.name, "difficulty": lv.difficulty,
+             "description": lv.description, "deity_name": lv.deity_name,
+             "win_rate": lv.win_rate_estimate}
+            for lid, lv in sorted(self._levels.items())
+        ]
 
 
 level_manager = LevelManager()
 
 
 def register_all_levels():
-    """Import and register all levels. Call this at app startup."""
+    """Import and register all 9 levels. Call once at app startup."""
     from app.levels import level_01, level_02, level_03, level_04, level_05
     from app.levels import level_06, level_07, level_08, level_09

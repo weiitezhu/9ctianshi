@@ -1,4 +1,4 @@
-"""Level 7: Lie Hunter - Information warfare / Deduction"""
+"""Level 7: Lie Hunter - find 3 fake statements among 8"""
 import random
 from app.levels.base import BaseLevel, LevelResponse
 from app.core.session_manager import GameSession, SessionStatus
@@ -6,101 +6,126 @@ from app.core.level_manager import level_manager
 
 
 class Level07(BaseLevel):
-    """8 facts, 3 are fake. Player asks questions and identifies fakes. 12 question limit."""
-
     level_id = 7
-    name = "Lie Hunter"
-    description = "8 facts from the deity, 3 are lies. Deduce which ones through questioning."
+    name = "谎言猎手"
+    description = "天神给出8条信息，其中3条是假的。你通过提问和推理找出所有假信息。AI会根据你的追问动态调整谎言。"
     difficulty = 0.72
-    rules_hint = "8 facts, 3 are fake. Ask questions or identify fakes by number. 12 questions max."
-    deity_name = "The Oracle"
+    rules_hint = "8条信息，3条是假的。说出编号指出假信息。AI会监控你的推理过程并调整策略。"
+    deity_name = "真言"
     win_rate_estimate = "~30%"
 
     FACTS = [
-        "The deity rides a white deer.",
-        "The trial entrance faces east.",
-        "The key is in the third room.",
-        "The deity's weakness is music.",
-        "The trial has a 2-hour time limit.",
-        "The deity rests at noon for 15 minutes.",
-        "Those who pass forget the experience.",
-        "The deity pities all challengers.",
-        "The northern lake has healing water.",
-        "The deity's palace has 999 lamps.",
-        "Failed challengers turn to stone.",
-        "The deity favors autumn above all.",
+        "天神的坐骑是一匹白鹿。",
+        "试炼之地的入口在东方。",
+        "通关钥匙藏在第三个房间。",
+        "天神的弱点是音乐。",
+        "试炼的时间限制是两个时辰。",
+        "天神每天午时会休息一刻钟。",
+        "通过试炼的人都会忘记这段经历。",
+        "天神其实同情所有挑战者。",
     ]
+    # Ground truth: 2=cannot find key in third room (key location unknown),
+    # 4=music is NOT weakness (random), 6=not all forget (some remember)
+    FAKE_GROUND = {2, 4, 6}
 
     def __init__(self):
         level_manager.register(7, self)
 
     async def on_start(self, session: GameSession) -> None:
-        selected = random.sample(self.FACTS, 8)
-        fakes = set(random.sample(range(8), 3))
+        idxs = list(range(len(self.FACTS)))
+        random.shuffle(idxs)
+        fake_set = set(random.sample(idxs, 3))
+        ordered = [self.FACTS[i] for i in idxs]
+        # Map position -> ground truth index
+        pos_to_ground = {pos: idxs[pos] for pos in range(len(idxs))}
+
         session.game_state = {
-            "facts": selected, "fakes": fakes, "found": set(),
-            "questions": 0, "max_q": 12, "shown": False,
+            "facts": ordered,
+            "fake_grounds": {pos_to_ground[p] for p in range(len(ordered)) if pos_to_ground[p] in fake_set},
+            "discovered": set(),  # positions discovered as fake
+            "questioned": 0,
+            "max_questions": 10,
         }
-        session.max_rounds = 12; session.moves_left = 12; session.score = 0.0
+        session.max_rounds = 10
+        session.moves_left = 10
+        session.score = 0.0
 
     async def on_message(self, session: GameSession, user_input: str) -> LevelResponse:
         gs = session.game_state
+        gs["questioned"] += 1
+        session.moves_left = gs["max_questions"] - gs["questioned"]
+
         t = user_input.strip()
-        gs["questions"] += 1
-        session.moves_left = gs["max_q"] - gs["questions"]
 
-        # First: show facts
-        if not gs["shown"]:
-            gs["shown"] = True
-            txt = "8 facts (3 are fake):\n\n"
-            for i, f in enumerate(gs["facts"]):
-                txt += f"{i+1}. {f}\n"
-            txt += "\nIdentify fakes by number: "#3 is fake""
-            return LevelResponse(ai_text=txt, is_action=True, game_event={"type": "facts_shown"})
+        # Check for "第N条是假的/错的"
+        found = None
+        for i in range(len(gs["facts"])):
+            mark = f"第{i+1}条" in t or f"{i+1}条" in t
+            if mark and any(k in t for k in ["假", "错", "伪", "不真"]):
+                found = i
+                break
 
-        # Try to identify a fake
-        import re
-        nums = re.findall(r'#?(\d+)', t)
-        is_claim = any(w in t for w in ["fake", "lie", "false", "wrong"])
-        if nums and is_claim:
-            idx = int(nums[0]) - 1
-            if 0 <= idx < 8:
-                if idx in gs["fakes"]:
-                    gs["found"].add(idx)
-                    found = len(gs["found"])
-                    needed = len(gs["fakes"])
-                    if found >= needed:
-                        session.status = SessionStatus.COMPLETED
-                        session.score = max(100.0 - gs["questions"] * 5, 20.0)
-                        return LevelResponse(
-                            ai_text=f"All {needed} fakes found in {gs['questions']} questions!",
-                            game_event={"type": "game_over", "result": "won",
-                                       "score": session.score,
-                                       "reason": f"Found all fakes"}, is_action=True)
-                    return LevelResponse(
-                        ai_text=f"Correct! {needed - found} fakes remaining.",
-                        game_event={"type": "fake_found", "found": found, "total": needed},
-                        is_action=True)
-                else:
-                    return LevelResponse(
-                        ai_text=f"#{idx+1} is TRUE: {gs['facts'][idx]}",
-                        is_action=True)
-
-        # Out of questions
-        if gs["questions"] >= gs["max_q"]:
-            session.status = SessionStatus.COMPLETED; session.score = 0.0
+        if found is not None:
+            if found in gs["discovered"]:
+                return LevelResponse(
+                    ai_text=f"第{found+1}条已经识破了。",
+                    game_event={"remaining": session.moves_left},
+                    is_action=True,
+                )
+            gs["discovered"].add(found)
+            total_fakes = len(gs["fake_grounds"])
+            if len(gs["discovered"]) >= total_fakes:
+                session.status = SessionStatus.COMPLETED
+                session.score = max(100.0 - gs["questioned"] * 5, 20.0)
+                r = f"全部{total_fakes}条假信息已识破！"
+                return LevelResponse(
+                    ai_text=r,
+                    game_event={"type": "game_over", "result": "won",
+                                "score": session.score, "reason": r},
+                    is_action=True,
+                )
+            left = total_fakes - len(gs["discovered"])
             return LevelResponse(
-                ai_text=f"Time up. Found {len(gs['found'])}/{len(gs['fakes'])} fakes.",
-                game_event={"type": "game_over", "result": "lost", "score": 0.0,
-                           "reason": "Out of questions"}, is_action=True)
+                ai_text=f"正确！还剩{left}条。",
+                game_event={"found": len(gs["discovered"]), "total": total_fakes},
+                is_action=True,
+            )
 
-        # Normal question -> AI responds
-        return LevelResponse(ai_text=None,
+        # First two rounds: show all facts
+        if gs["questioned"] <= 2:
+            lines = ["天神列出以下信息："]
+            for i, f in enumerate(gs["facts"]):
+                lines.append(f"  {i+1}. {f}")
+            lines.append("\n请指出你认为假的信息，格式：「第3条是假的」")
+            return LevelResponse(
+                ai_text="\n".join(lines),
+                game_event={"type": "facts_shown"},
+                is_action=True,
+            )
+
+        # Ran out
+        if session.moves_left <= 0:
+            session.status = SessionStatus.COMPLETED
+            session.score = 0.0
+            r = f"时间耗尽。你只找出了{len(gs['discovered'])}/{len(gs['fake_grounds'])}条。"
+            return LevelResponse(
+                ai_text=r,
+                game_event={"type": "game_over", "result": "lost",
+                            "score": 0.0, "reason": r},
+                is_action=True,
+            )
+
+        return LevelResponse(
+            ai_text=None,
             game_event={"type": "question_asked", "remaining": session.moves_left},
-            is_action=False)
+            is_action=False,
+        )
 
-    async def judge(self, session): return None
-    def get_default_strategy(self):
-        return {"defensive": True, "redirect": True, "adapt": True}
+    async def judge(self, session: GameSession) -> dict | None:
+        return None
+
+    def get_default_strategy(self) -> dict:
+        return {"defensive": True, "adapt": True, "lie_smart": True}
+
 
 Level07()

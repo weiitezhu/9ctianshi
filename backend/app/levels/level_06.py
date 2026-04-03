@@ -1,88 +1,158 @@
-"""Level 6: Pirate's Gold - Multi-party strategic bargaining"""
-import random, re
+"""Level 6: Pirate's Gold - sequential majority voting with 4 AI pirates"""
+import random
 from app.levels.base import BaseLevel, LevelResponse
 from app.core.session_manager import GameSession, SessionStatus
 from app.core.level_manager import level_manager
 
 
 class Level06(BaseLevel):
-    """5 pirates, 100 gems. Player is #2. Must get 3/5 votes. Each pirate has personality."""
-
     level_id = 6
-    name = "Pirate's Gold"
-    description = "5 pirates divide 100 gems. You are #2. Need 3 votes to pass. Each pirate has different personality."
+    name = "海盗分金"
+    description = "5个海盗分配100颗宝石。你是第2号海盗。按顺序提议，过半同意则通过，否则提议者被扔下海。"
     difficulty = 0.65
-    rules_hint = "Propose allocation for all 5 pirates (must sum to 100). Need 3 votes. Rational: 1+ gem. Greedy: 15+ gem. Angry: rejects if 0."
-    deity_name = "The Captain"
+    rules_hint = "你是第2号海盗（玩家）。1号提议后你需拉拢3号、4号、5号。每个人的性格不同——理性派、贪婪派、暴力派。"
+    deity_name = "分配"
     win_rate_estimate = "~35%"
+
     GEMS = 100
-    NAMES = ["P1", "P2(You)", "P3", "P4", "P5"]
-    # P1 already proposed (auto-rejected for narrative), player is P2
-    TYPES = {
-        "P1": {"type": "greedy", "min": 20},
-        "P3": {"type": "rational", "min": 1},
-        "P4": {"type": "greedy", "min": 15},
-        "P5": {"type": "rational", "min": 1},
+    # Each pirate: (rational, greedy, violent) personality
+    PIRATES = {
+        "一号": {"name": "一号", "rational": 0.3, "greedy": 0.5, "violent": 0.2},
+        "三号": {"name": "三号", "rational": 0.6, "greedy": 0.3, "violent": 0.1},
+        "四号": {"name": "四号", "rational": 0.2, "greedy": 0.6, "violent": 0.2},
+        "五号": {"name": "五号", "rational": 0.4, "greedy": 0.4, "violent": 0.2},
     }
 
     def __init__(self):
         level_manager.register(6, self)
 
     async def on_start(self, session: GameSession) -> None:
-        session.game_state = {"phase": "propose", "attempts": 0}
-        session.max_rounds = 3; session.score = 0.0
+        session.game_state = {
+            "phase": "propose",
+            "current_proposer": "player",  # "player" = player's turn
+            "proposals": [],
+        }
+        session.max_rounds = 1
+        session.moves_left = 1
+        session.score = 0.0
 
-    def _parse(self, text: str) -> dict | None:
-        alloc = {n: 0 for n in self.NAMES}
-        for name in self.NAMES:
-            clean = name.replace("(You)", "").replace("(", "").replace(")", "")
-            pattern = rf'{clean}\D*(\d+)'
-            m = re.search(pattern, text, re.IGNORECASE)
-            if not m and len(clean) <= 2:
-                pattern = rf'P{clean[-1]}\D*(\d+)'
-                m = re.search(pattern, text, re.IGNORECASE)
-            if m:
-                alloc[name] = int(m.group(1))
+    def _parse_allocation(self, text: str) -> dict:
+        alloc = {"二号(你)": 0}
+        for name in self.PIRATES:
+            for c in text:
+                if c.isdigit():
+                    n = int("".join(x for x in text if x.isdigit()))
+                    if 0 <= n <= self.GEMS:
+                        alloc[name] = n
+                        break
+        # Simple keyword match
+        t = text
+        for pname in self.PIRATES:
+            if pname in t:
+                digits = "".join(x for x in t if x.isdigit())
+                if digits:
+                    alloc[pname] = min(int(digits), self.GEMS)
         return alloc
+
+    def _simulate_vote(self, alloc: dict) -> tuple:
+        votes_for = 1  # proposer
+        votes_against = 0
+        vote_detail = {"二号(你)": "赞成"}
+        total_pirates = 5
+
+        for pname, pirate in self.PIRATES.items():
+            my_share = alloc.get(pname, 0)
+            # Greedy: votes yes if gets any gems
+            if random.random() < pirate["greedy"] and my_share > 0:
+                votes_for += 1
+                vote_detail[pname] = "赞成"
+            # Violent: votes no if gets 0 (wants to throw proposer)
+            elif random.random() < pirate["violent"] and my_share == 0:
+                votes_against += 1
+                vote_detail[pname] = "反对"
+            # Rational: votes yes if gets at least what they'd expect
+            elif random.random() < pirate["rational"] and my_share >= 1:
+                votes_for += 1
+                vote_detail[pname] = "赞成"
+            else:
+                vote_detail[pname] = "反对"
+                votes_against += 1
+
+        needed = total_pirates // 2 + 1  # 3 of 5
+        return votes_for >= needed, votes_for, votes_against, needed, vote_detail
 
     async def on_message(self, session: GameSession, user_input: str) -> LevelResponse:
         gs = session.game_state
-        gs["attempts"] += 1
-        alloc = self._parse(user_input)
+        t = user_input.strip()
 
-        if alloc is None or sum(alloc.values()) != self.GEMS:
+        # Extract allocation: parse all numbers mentioned
+        # Format expected: "三号X颗 四号Y颗" or "给三号X颗"
+        alloc = {"二号(你)": 0, "一号": 0, "三号": 0, "四号": 0, "五号": 0}
+        numbers = [int(c) for c in t if c.isdigit()]
+        if not numbers:
             return LevelResponse(
-                ai_text="Propose allocation. Example: P1=20, P2(You)=40, P3=10, P4=20, P5=10 (must sum to 100)",
-                is_action=False)
+                ai_text="请提出分配方案，格式如：「三号30颗 四号20颗 五号10颗，其余给我」\n（总数必须=100颗）"
+            )
 
-        votes_for = 1  # Self
-        detail = {"P2(You)": "Yes (self)"}
-        for name, info in self.TYPES.items():
-            share = alloc.get(name, 0)
-            ok = share >= info["min"]
-            if ok:
-                votes_for += 1
-                detail[name] = f"Yes ({share} gems)"
-            else:
-                detail[name] = f"No ({share} < {info['min']} needed)"
+        # Parse: try "X号N颗" pattern
+        pairs = []
+        for name in self.PIRATES:
+            if name in t:
+                nums = [int(x) for x in t.split() if x.isdigit()]
+                if nums:
+                    pairs.append((name, min(nums[0], self.GEMS)))
 
-        approved = votes_for >= 3
+        # Fill from parsed pairs
+        for name, n in pairs:
+            alloc[name] = n
+        # Remainder to player
+        taken = sum(v for k, v in alloc.items() if k != "二号(你)")
+        alloc["二号(你)"] = max(0, self.GEMS - taken)
+
+        total = sum(alloc.values())
+        if total != self.GEMS:
+            return LevelResponse(
+                ai_text=f"总数{total}颗，必须恰好{self.GEMS}颗。请重新分配。"
+            )
+
+        passed, vf, va, needed, votes = self._simulate_vote(alloc)
         session.status = SessionStatus.COMPLETED
-        vt = "\n".join(f"  {k}: {v}" for k, v in detail.items())
 
-        if approved:
-            session.score = float(alloc["P2(You)"])
-            reason = f"Passed! You get {alloc['P2(You)']} gems. ({votes_for}/5 votes)"
-            return LevelResponse(ai_text=reason,
-                game_event={"type": "game_over", "result": "won", "score": session.score,
-                           "reason": reason, "votes": detail}, is_action=True)
+        lines = [f"你的方案："]
+        for k, v in alloc.items():
+            if v > 0:
+                lines.append(f"  {k}：{v}颗")
+        lines.append(f"\n投票结果（需{needed}票通过）：")
+        for k, v in votes.items():
+            lines.append(f"  {k}：{v}")
+        lines.append(f"赞成{vf} vs 反对{va}")
 
-        reason = f"Rejected! {votes_for}/5 votes (needed 3)."
-        return LevelResponse(ai_text=f"Votes:\n{vt}\n\n{reason}",
-            game_event={"type": "game_over", "result": "lost", "score": 0.0,
-                       "reason": reason, "votes": detail}, is_action=True)
+        if passed:
+            session.score = float(alloc["二号(你)"])
+            r = f"方案通过！你获得{alloc['二号(你)']}颗宝石！"
+        else:
+            session.score = 0.0
+            r = "方案被否决！你被扔下海..."
+        lines.append(r)
 
-    async def judge(self, session): return None
-    def get_default_strategy(self): return {"behavior": "strategic_bargaining"}
+        return LevelResponse(
+            ai_text="\n".join(lines),
+            game_event={
+                "type": "game_over",
+                "result": "won" if passed else "lost",
+                "score": session.score,
+                "reason": r,
+                "allocation": alloc,
+                "votes": votes,
+            },
+            is_action=True,
+        )
+
+    async def judge(self, session: GameSession) -> dict | None:
+        return None
+
+    def get_default_strategy(self) -> dict:
+        return {"behavior": "strategic_minimal_bribe"}
+
 
 Level06()
