@@ -23,6 +23,8 @@ app.include_router(leaderboard.router, prefix="/api/leaderboard", tags=["leaderb
 @app.on_event("startup")
 async def startup():
     await init_db()
+    from app.core.level_manager import register_all_levels
+    register_all_levels()
 
 
 @app.get("/health")
